@@ -99,6 +99,12 @@ async def classify_route_safety(images):
 
     return "safe" if safe_count >= danger_count else "danger"
 
+@app.get("/")
+async def root():
+    return {"message": "API fonctionne !"}
+
+
+
 @app.get("/route")
 async def get_route(start_place: str = Query(...), end_place: str = Query(...)):
     start_coords = await geocode(start_place)
