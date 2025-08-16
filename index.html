@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Safe Routes avec IA</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+    body { height: 100vh; display: flex; flex-direction: column; background: #f4f6f8; }
+    #controls {
+      padding: 15px;
+      background: #fff;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      z-index: 1000;
+    }
+    #controls input {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      width: 180px;
+      transition: all 0.2s;
+    }
+    #controls input:focus {
+      border-color: #0070f3;
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(0,112,243,0.2);
+    }
+    #controls button {
+      padding: 8px 16px;
+      background: #0070f3;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #controls button:hover {
+      background: #005ac1;
+    }
+    #map { flex: 1; }
+    .leaflet-control-zoom { background: #fff; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <input type="text" id="start" placeholder="Zone de départ" />
+    <input type="text" id="end" placeholder="Zone d'arrivée" />
+    <button id="applyBtn">Chercher itinéraire</button>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    const backendUrl = "https://womanalert-production.up.railway.app";
+
+    const map = L.map('map', { zoomControl: false }).setView([33.566, -7.673], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    L.control.zoom({ position: 'topright' }).addTo(map);
+
+    let routeLines = [];
+    let markersGroup = L.layerGroup().addTo(map);
+
+    document.getElementById("applyBtn").addEventListener("click", async () => {
+      const startPlace = document.getElementById("start").value.trim();
+      const endPlace = document.getElementById("end").value.trim();
+      if (!startPlace || !endPlace) {
+        alert("Merci de remplir les deux zones.");
+        return;
+      }
+
+      routeLines.forEach(line => map.removeLayer(line));
+      routeLines = [];
+      markersGroup.clearLayers();
+
+      try {
+        const resp = await fetch(`${backendUrl}/route?start_place=${encodeURIComponent(startPlace)}&end_place=${encodeURIComponent(endPlace)}`);
+        const data = await resp.json();
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+
+        data.routes.forEach((route, idx) => {
+          const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+          const color = route.status === "danger" ? "#ff4d4f" : "#28a745";
+          const line = L.polyline(coords, { color, weight: 5, opacity: 0.8, dashArray: "5,5" }).addTo(map);
+          line.bindPopup(`<strong>Itinéraire ${idx + 1}</strong><br>Status : ${route.status.toUpperCase()}<br>Distance : ${(route.distance/1000).toFixed(2)} km`);
+          routeLines.push(line);
+        });
+
+        if (routeLines.length > 0) map.fitBounds(routeLines[0].getBounds());
+
+        markersGroup.addLayer(L.marker([data.start.lat, data.start.lon]).bindPopup("Départ").openPopup());
+        markersGroup.addLayer(L.marker([data.end.lat, data.end.lon]).bindPopup("Destination"));
+
+      } catch (e) {
+        alert("Erreur lors de la récupération des données");
+        console.error(e);
+      }
+    });
+  </script>
+</body>
+</html>
