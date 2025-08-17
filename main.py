@@ -4,6 +4,7 @@ import httpx
 import asyncio
 from dotenv import load_dotenv
 import os
+import math
 
 load_dotenv()
 
@@ -22,9 +23,10 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MAPILLARY_TOKEN = os.getenv("MAPILLARY_TOKEN")
 
-
 timeout = httpx.Timeout(30.0, connect=10.0)
 openrouter_lock = asyncio.Lock()
+
+# ------------------- UTILS -------------------
 
 async def geocode(place: str):
     url = "https://nominatim.openstreetmap.org/search"
@@ -37,18 +39,37 @@ async def geocode(place: str):
             return None
         return float(data[0]["lat"]), float(data[0]["lon"])
 
-async def get_mapillary_images(bbox: str, limit: int = 5):
+async def get_mapillary_image_near_point(lat: float, lon: float, radius: int = 30):
+    """Retourne une image Mapillary proche d’un point"""
     url = "https://graph.mapillary.com/images"
     params = {
-        "bbox": bbox,
-        "limit": limit,
+        "closeto": f"{lon},{lat}",  # attention ordre: lon,lat
+        "radius": radius,
+        "limit": 1,
         "fields": "id,computed_geometry,thumb_1024_url",
         "access_token": MAPILLARY_TOKEN,
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        return data.get("data", [])
+
+async def get_mapillary_images_along_route(coords_list, step: int = 10):
+    """
+    Échantillonne le trajet et récupère des images proches des points.
+    step = 10 → prend un point sur 10 (réduit le nombre d’appels)
+    """
+    images = []
+    for i in range(0, len(coords_list), step):
+        lon, lat = coords_list[i]
+        nearby = await get_mapillary_image_near_point(lat, lon)
+        if nearby:
+            images.extend(nearby)
+        await asyncio.sleep(0.2)  # éviter rate-limit
+    return images
+
+# ------------------- IA ANALYSE -------------------
 
 async def analyze_image(image_url: str, retries=3):
     headers = {
@@ -96,15 +117,15 @@ async def classify_route_safety(images):
             danger_count += 1
         else:
             safe_count += 1
-        await asyncio.sleep(1)  # Pause pour éviter rate-limit
+        await asyncio.sleep(1)  # éviter rate-limit
 
     return "safe" if safe_count >= danger_count else "danger"
+
+# ------------------- ROUTES -------------------
 
 @app.get("/")
 async def root():
     return {"message": "API fonctionne !"}
-
-
 
 @app.get("/route")
 async def get_route(start_place: str = Query(...), end_place: str = Query(...)):
@@ -136,17 +157,11 @@ async def get_route(start_place: str = Query(...), end_place: str = Query(...)):
 
     for path in route_data.get("paths", []):
         coords_list = path["points"]["coordinates"]  # [ [lon, lat], ... ]
-        lons = [c[0] for c in coords_list]
-        lats = [c[1] for c in coords_list]
 
-        # Création bbox un peu élargie autour itinéraire
-        bbox = f"{min(lons)-0.005},{min(lats)-0.005},{max(lons)+0.005},{max(lats)+0.005}"
+        # récupérer les images le long du trajet
+        images = await get_mapillary_images_along_route(coords_list, step=15)
 
-        # Récupérer images Mapillary dans bbox
-        images_data = await get_mapillary_images(bbox, limit=10)
-        images = images_data.get("data", [])
-
-        # Analyser les images
+        # analyser les images
         status = await classify_route_safety(images)
 
         routes_with_status.append({
@@ -154,6 +169,7 @@ async def get_route(start_place: str = Query(...), end_place: str = Query(...)):
             "distance": path.get("distance"),
             "time": path.get("time"),
             "status": status,
+            "images": [img.get("thumb_1024_url") for img in images[:5]]  # renvoyer quelques images au frontend
         })
 
     return {
