@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 GRAPHHOPPER_API_KEY = os.getenv("GRAPHHOPPER_API_KEY")
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_URL = "https://api.deepseek.com/v1/chat/completions"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MAPILLARY_TOKEN = os.getenv("MAPILLARY_TOKEN")
 
